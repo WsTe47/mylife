@@ -199,6 +199,24 @@ dsh plugin --profile web add dsh-mylife
 
 然后重启 `dsh web`，新开一个会话。
 
+### 安装配套 Skill
+
+DSH 只从固定根目录发现 Skill，**装 npm 包不会自动带上它**。请手动复制一份：
+
+```sh
+mkdir -p ~/.dsh/skills
+cp -R ~/dsh-mylife/skills/mylife-decision ~/.dsh/skills/
+```
+
+（若你的 dsh-mylife 装在别处，把路径换成实际位置。）
+
+Skill 目录**会实时刷新**，不需要重启；工具目录则在会话创建时确定。
+验证：`dsh --profile headless "你的可用技能清单里有没有 mylife-decision？"` → 有。
+
+> 这是当前的已知粗糙处：理想做法是插件通过 skill 注册表自带这个 Skill，
+> 但那需要 import dsh 的内部包（本插件刻意不依赖它们，以便任何布局下都能加载）。
+> 暂以手动复制为过渡方案。
+
 ### 配置工作区（可选）
 
 默认工作区是 `~/mylife`。要改的话，在 profile 的 patch 里加 `workspaceRoot`：
@@ -329,6 +347,7 @@ src/
 - **不做长周期自动提醒**（如"三个月后提醒我复盘"）。`dsh-schedule` 的提醒需要
   会话存活，跨月不可靠。计划用系统级定时（launchd/cron）+ `dsh --profile headless`。
 - **不做 UI**，使用现有 Web 界面与文件本身。
+- **Skill 需手动安装到 `~/.dsh/skills`**（见安装章节）—— npm 包不会自动带上它。
 
 ## 路线图
 
