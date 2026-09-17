@@ -1,0 +1,19 @@
+node_modules/
+*.log
+.DS_Store
+
+# zvec-grep 索引（可重建）
+.zvec-grep/
+.zgtool/
+.probe/
+
+# 本地凭据与配置，绝不入库
+*.local.yaml
+.env
+.env.*
+credentials*
+*.key
+
+# 真实个人档案绝不入库。示例语料在 examples/ 下，是显式排除的例外。
+# 若你把工作区指向本仓库（不推荐），请自行确认此处规则生效。
+workspace/

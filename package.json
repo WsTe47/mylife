@@ -1,0 +1,51 @@
+{
+  "name": "dsh-mylife",
+  "version": "0.1.0",
+  "description": "MyLife — a local-first personal state record and decision engine for DeepSeek Harness. Reconstructs the thread through your confusion, argues against its own conclusions, and retires premises you have outgrown.",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "memory",
+    "decision-support",
+    "local-first"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.1.5-rc.1"
+  },
+  "main": "src/index.js",
+  "exports": {
+    ".": {
+      "default": "./src/index.js"
+    },
+    "./lib/*": "./src/lib/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "skills",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "js-yaml": "^4.3.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WsTe47/mylife.git"
+  },
+  "author": "WsTe47"
+}

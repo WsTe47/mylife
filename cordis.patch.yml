@@ -1,0 +1,16 @@
+# dsh-mylife bundle patch —— 把 MyLife 插件挂载进 profile 的插件树。
+#
+# 一行 insert 即可：这既是 npm 发布后的安装形态，
+# 也是本地开发时 `dsh web --patch ./cordis.patch.yml` 的形态。
+#
+# `id` 必填。dsh 的 loader 按 id 比较配置项：
+# 不写 id 的话，每次编辑配置文件它都会得到一个新 id，
+# 于是被当成"删旧增新"而整块重挂（见 docs/cordis-tutorial/06-composition-and-hmr）。
+- insert:
+    - id: mylife
+      name: 'dsh-mylife'
+      config:
+        # 工作区位置。省略则用 ~/mylife。
+        # 可用 MYLIFE_ROOT 环境变量覆盖，或用本插件的 mylife_profile_set 之后
+        # 手工调整此处。档案是纯文本，随时可以搬到别处。
+        # workspaceRoot: '~/mylife'

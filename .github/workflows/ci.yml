@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22.x, 24.x]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm ci
+      - run: npm test
+      - name: 校验 bundle manifest（收录要求）
+        run: |
+          node -e "
+          const pkg = require('./package.json');
+          const patch = pkg.dsh && pkg.dsh.bundle && pkg.dsh.bundle.patch;
+          if (!patch) { console.error('缺少 dsh.bundle.patch —— 只声明 dsh.client 的包无法安装'); process.exit(1); }
+          const fs = require('fs');
+          if (!fs.existsSync(patch)) { console.error('patch 文件不存在: ' + patch); process.exit(1); }
+          console.log('bundle manifest OK: ' + patch);
+          "
