@@ -125,6 +125,41 @@ describe('核心链路 record → digest → claim_add → trace', () => {
     assert.equal(traced.lines[0].line, lineNo, '行号必须与写入时一致')
   })
 
+  test('用 record 返回的 provenance 建证据，trace 必须取到原文（端到端）', async () => {
+    const rec = await execute('mylife_record', {
+      text: '我今天很迷茫，不知道要不要换城市。',
+      topic: '验证',
+    }, cfg)
+
+    // 直接把工具返回的 provenance 拿去用 —— 这是 agent 应该做的
+    const claim = await execute('mylife_claim_add', {
+      claim: '验证：用户在考虑换城市',
+      topic: '验证',
+      kind: 'assessment',
+      source: 'user_raw',
+      provenance: rec.provenance,
+      excerpt: '不知道要不要换城市',
+    }, cfg)
+
+    const traced = await execute('mylife_trace', { id: claim.id }, cfg)
+    assert.equal(traced.traced, true)
+    const joined = traced.lines.map((l) => l.text).join('\n')
+    assert.ok(joined.includes('不知道要不要换城市'), '溯源必须取到原文内容')
+    // 不得取到元信息头或空行
+    assert.ok(!joined.includes('原始层：一字不改'), '不得指到元信息头')
+    assert.ok(joined.trim() !== '', '不得指到空行')
+  })
+
+  test('render 会把 provenance 明示给 agent（避免它猜行号）', async () => {
+    const rec = await execute('mylife_record', { text: 'x', topic: 't' }, cfg)
+    const rendered = createTools(cfg)
+      .find((t) => t.name === 'mylife_record')
+      .output.render({}, rec)[0].text
+    assert.ok(rendered.includes(rec.provenance), '应直接给出可用的 provenance')
+    assert.ok(rendered.includes(String(rec.startLine)), '应给出正文起始行')
+    assert.ok(rendered.includes('不要自己猜行号') || rendered.includes('元信息头'))
+  })
+
   test('无出处的证据在简报里被明确标出', async () => {
     await execute('mylife_claim_add', {
       claim: '一条没有出处的断言',

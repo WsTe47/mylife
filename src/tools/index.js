@@ -83,8 +83,11 @@ export function createTools(config = {}) {
       name: 'mylife_record',
       description:
         '把一段原始输入存入 L0 原始层（永不修改）。用于用户的自述、碎碎念、语音转写、粘贴的文档。' +
-        '允许包含错别字、语病与重复 —— 不要替用户"整理"后再存，原文才是证据。' +
-        '返回的文件路径与行号可用于 claim 的 provenance。',
+        '允许包含错别字、语病与重复 —— 不要替用户"整理"后再存，原文才是证据。\n\n' +
+        '返回值里的 `provenance` 是**可以直接拿去用的指针**，请原样引用；' +
+        '`startLine`/`endLine` 是正文的精确行区间。' +
+        '⚠️ 不要自己猜行号 —— 文件开头有元信息头，猜错会让溯源指向空行，' +
+        '而"每条判断可溯源"是 MyLife 的核心承诺。',
       properties: {
         text: { type: 'string', description: '原始文本，逐字保留' },
         topic: { type: 'string', description: '主题标签，仅用于文件名与检索' },
@@ -96,8 +99,11 @@ export function createTools(config = {}) {
       },
       required: ['text'],
       render: (v) =>
-        `已存入 L0：${v.file}（共 ${v.lines} 行）\n` +
-        `原文不会被修改。引用它时请用 provenance 形如 ${v.file}#L12 或 ${v.file}#L12-18。`,
+        `已存入 L0：${v.file}\n` +
+        `  正文位于第 ${v.startLine}–${v.endLine} 行（文件共 ${v.lines} 行，开头是元信息头）\n` +
+        `  引用这段原文时，provenance 请直接用：\n` +
+        `    ${v.provenance}\n` +
+        `  原文不会被修改。若只引用其中某一句，用 ${v.file}#L<该句行号>。`,
     }),
 
     // ── 2. 写入主题摘要 ───────────────────────────────────────

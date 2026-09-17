@@ -166,7 +166,8 @@ export async function recordRaw({ text, topic = 'misc', source = 'text', config 
     n += 1
     file = `raw/${day}-${String(n).padStart(3, '0')}-${slug(topic)}.md`
   }
-  const head = [
+  // 元信息头。正文紧跟其后 —— 行号必须精确可算，否则溯源会指错行。
+  const headLines = [
     `# 原始输入 ${day}`,
     '',
     `- 记录时间：${stamp.toISOString()}`,
@@ -175,12 +176,30 @@ export async function recordRaw({ text, topic = 'misc', source = 'text', config 
     '',
     '> 本文为 L0 原始层：一字不改地保留，作为不可伪造的证据源。',
     '',
-  ].join('\n')
+  ]
+  const head = headLines.join('\n')
   const body = `${head}${text.trimEnd()}\n`
   await writeText(path.join(root, file), body)
 
-  const lines = body.split('\n').length
-  return { id: path.basename(file, '.md'), file, lines }
+  const allLines = body.split('\n')
+  const lines = allLines.length
+
+  // 正文的精确行区间。**这是溯源能否指对行的关键**：
+  // 调用方（agent）必须拿到它，否则只能猜行号，而猜错会让"每条判断可溯源"
+  // 这个核心承诺失效（实测中就发生过：正文在第 8 行，agent 猜了第 9 行的空行）。
+  const startLine = headLines.length // 头末尾的空串让正文落在下一行
+  const textLineCount = text.trimEnd().split('\n').length
+  const endLine = startLine + textLineCount - 1
+
+  return {
+    id: path.basename(file, '.md'),
+    file,
+    lines,
+    startLine,
+    endLine,
+    /** 可直接用于 claim.provenance 的指针 */
+    provenance: makeProvenance(file, startLine, endLine),
+  }
 }
 
 /**

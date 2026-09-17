@@ -106,6 +106,31 @@ describe('L0 原始层', () => {
     assert.ok(!first.includes('第二条'), '新记录不得污染旧文件')
   })
 
+  test('返回的 provenance 精确指向正文（不能指到元信息头或空行）', async () => {
+    const text = '第一句：很迷茫。\n第二句：不知道要不要换城市。'
+    const r = await recordRaw({ text, topic: '验证', config })
+
+    // 用返回的指针去读文件，取到的必须**正好是正文**
+    const saved = await fs.readFile(path.join(tmp, r.file), 'utf8')
+    const all = saved.split('\n')
+    const body = all.slice(r.startLine - 1, r.endLine)
+    assert.deepEqual(body, text.split('\n'), 'startLine/endLine 必须精确框住正文')
+
+    // provenance 格式正确且指向同一区间
+    assert.equal(r.provenance, `${r.file}#L${r.startLine}-${r.endLine}`)
+
+    // 这是关键回归：曾经的缺陷是只返回总行数，agent 猜行号猜到了末尾空行
+    assert.notEqual(r.startLine, r.lines, '正文不应从文件末尾开始')
+    assert.notEqual(all[r.startLine - 1].trim(), '', '起始行不能是空行')
+  })
+
+  test('多行正文的行区间正确', async () => {
+    const r = await recordRaw({ text: 'A\nB\nC\nD', topic: 't', config })
+    const saved = await fs.readFile(path.join(tmp, r.file), 'utf8')
+    const body = saved.split('\n').slice(r.startLine - 1, r.endLine)
+    assert.deepEqual(body, ['A', 'B', 'C', 'D'])
+  })
+
   test('空文本被拒绝', async () => {
     await assert.rejects(() => recordRaw({ text: '   ', config }), /text 不能为空/)
   })
