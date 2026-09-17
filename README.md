@@ -368,6 +368,21 @@ src/
 - [ ] 领域透镜 Skill 的社区化（职业 / 财务 / …）
 - [ ] 可选语义检索接入（如 zvec-grep：实测能把"该不该离职"与"绝不考虑离开"匹配起来）
 
+## 设计文档
+
+这个项目的**思考过程**和代码一样重要 —— 因为它做的每个设计决定都在对抗大模型的
+谄媚倾向，而那些决定需要解释才能被审查：
+
+| 文档 | 内容 |
+|---|---|
+| [产品定义](docs/design/vision.md) | 核心洞察、三层架构、边界与风险、竞品对比 |
+| [技术方案](docs/design/technical-design.md) | 四层信息模型、反证引擎、话题漂移设计、分发 |
+| [路线图](docs/design/roadmap.md) | 四阶段规划、"越用越离不开即失败"的判据 |
+| [发布与社区贡献](docs/design/release.md) | 两个分发渠道、收录要求、权限与伦理边界 |
+| [Memorix 接入实测](docs/design/research-memorix.md) | 为什么不要让记忆层负责中文检索（含实测数据） |
+| [存储层选型](docs/design/research-storage-options.md) | 三个候选项目的物种区分 |
+| [界面挂掉勘察](docs/web-ui-hang-investigation.md) | 一次未确诊但排除项明确的排查记录 |
+
 ## 相关
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) —— 底座。`Everything is a Plugin.`
