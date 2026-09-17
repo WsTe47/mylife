@@ -1,5 +1,7 @@
 # 证伪链：反证引擎的重新设计
 
+> **状态：已实现并实测**（`src/lib/defeater.js` + `mylife_defeaters` 工具 + 32 个测试）。
+>
 > 起因：用真实语料测试时，词法极性反证引擎**完全失效**（23 条证据、0 findings）。
 > 用户提出了更好的思路：**从关键点 A 找到反向的 D|E|F，再用 D|E|F 去搜索、判断、决策。**
 > 本文是这个思路的形式化、实测与落地设计。
@@ -108,26 +110,44 @@
 
 ---
 
-## 5. 落地形态（建议）
+## 5. 落地形态（**已实现**）
 
 ```
+src/lib/llm.js       薄 DeepSeek 适配器（不 import dsh 内部包）
 src/lib/defeater.js
-  generateDefeaters({ proposition, corpus, llm })   → D1…Dn（含 type）
-  searchDefeaters({ defeaters, corpus })             → 每条 D 的证据（A/B/C）
-  renderDefeaterReport({ results })                  → 提问式文案（复用 AXIS_BRIDGE 纪律）
+  generateDefeaters({ proposition, corpus, llm })   → D1…Dn（含 type/label）
+  searchDefeaters({ defeaters, corpus, llm })        → 四态 A/B/R/C
+  buildDefeaterAnalysis({ ... })                     → 分析 + 汇总
+  renderDefeaterReport({ ... })                      → 提问式文案（纪律写进代码）
 
-tools: mylife_defeaters({ proposition })
+tools: mylife_defeaters({ proposition, corpus?, file? })
 ```
 
 **依赖注入 `llm` 而非直接 import dsh 内部包** ——
 与本插件"不依赖任何 dsh 包、任何布局下都能加载"的既有取舍一致。
 调用方可传 `ctx.llm`，测试时可传 stub，**因此可以完整单测而不烧 API**。
 
-### 测试策略
+### 测试策略（已按此实现）
 
-- `generateDefeaters` / `searchDefeaters`：用 **stub llm** 测流程与三态分类
-- `renderDefeaterReport`：测措辞纪律（不得出现指控性措辞，必须有提问）
-- **另加一个真实 API 的冒烟测试，默认 skip**（标注 `live_llm`），手动触发
+- `generateDefeaters` / `searchDefeaters`：用 **stub llm** 测流程与四态分类
+- `renderDefeaterReport`：测措辞纪律（不得出现指控性措辞、必须有提问、
+  R 态不得说成"加强了主判断"）
+- `mylife_defeaters` 工具：端到端（含语料自动加载、空语料报错）
+- **真实 API 冒烟测试默认 skip**：`MYLIFE_LIVE_LLM=1 node --test test/defeater.test.js`
+
+### 实现中修正的三个问题
+
+真实语料第一版跑出来的结果暴露了三处，都已修并补了测试：
+
+1. **证伪项写成长句散文** → 增加 `label`（≤24 字短标题），命题降为正文引用块
+2. **"自我澄清"被判成"找到支持"** → 提示词明确：证伪项被自我澄清否定时判 `B`，
+   并新增 `R` 态专门表示"本人已想过并排除"
+3. **`gap` 问错了对象**（追问心理成因/传记） → 收窄定义：
+   gap 必须是**能改变这个决定、本人当下就能给出答案的客观事实**
+   （存款能撑几个月、市场定价、能否接受降薪）
+
+另修一个渲染顺序 bug：`R` 态被 `type==='internal'` 分支抢走。
+现在 verdict 与 type 是**两个独立决定**，互不遮蔽。
 
 ---
 

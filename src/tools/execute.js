@@ -22,6 +22,9 @@ import {
 } from '../lib/store.js'
 import { checkStaleness, fieldFreshness, inferTtlDays } from '../lib/fields.js'
 import { buildCounterEvidence } from '../lib/evidence.js'
+import { buildDefeaterAnalysis, renderDefeaterReport } from '../lib/defeater.js'
+import { createLlm } from '../lib/llm.js'
+import { readTextOrNull, layout, resolveRoot } from '../lib/workspace.js'
 
 /**
  * 执行一个 MyLife 工具。
@@ -118,6 +121,32 @@ export async function execute(toolName, args = {}, config = {}) {
       return { ...result, promptPreview: null }
     }
 
+    // ── 证伪链（反证主路径）─────────────────────────────────
+    case 'mylife_defeaters': {
+      // 语料来源：显式传入，或从工作区的 raw/ 里取指定文件（或全部）
+      let corpus = args.corpus
+      if (!corpus) {
+        corpus = await loadCorpus(args.file, config)
+      }
+      if (!corpus) {
+        throw new Error(
+          'mylife_defeaters: 没有可用语料。请传 corpus，或传 file（工作区内的相对路径），' +
+            '或先用 mylife_record 存入原文（之后不传 file 会用 raw/ 下全部内容）。',
+        )
+      }
+      const llm = args._llm ?? (await createLlm(config))
+      const analysis = await buildDefeaterAnalysis({
+        proposition: args.proposition,
+        corpus,
+        llm,
+      })
+      return {
+        ...analysis,
+        rendered: renderDefeaterReport(analysis),
+        corpusChars: corpus.length,
+      }
+    }
+
     // ── 开场简报 ────────────────────────────────────────────
     case 'mylife_status':
       return buildStatus(config)
@@ -172,6 +201,41 @@ export async function buildStatus(config = {}) {
     unsourcedClaims: active.filter((c) => !c.provenance).map((c) => c.id),
     hasAnything: fieldNames.length > 0 || active.length > 0,
   }
+}
+
+/**
+ * 取语料。
+ *
+ * @param {string} [file] - 工作区内的相对路径
+ * @param {object} config
+ * @returns {Promise<string|null>}
+ */
+async function loadCorpus(file, config) {
+  const root = resolveRoot(config)
+  const l = layout(root)
+  if (file) {
+    return readTextOrNull(pathJoin(root, file))
+  }
+  // 未指定文件：把 raw/ 下全部原文拼起来（L0 就是语料）
+  const { promises: fs } = await import('node:fs')
+  const path = await import('node:path')
+  let names = []
+  try {
+    names = (await fs.readdir(l.raw)).filter((n) => n.endsWith('.md')).sort()
+  } catch {
+    return null
+  }
+  if (!names.length) return null
+  const parts = []
+  for (const n of names) {
+    const t = await readTextOrNull(path.join(l.raw, n))
+    if (t) parts.push(t)
+  }
+  return parts.length ? parts.join('\n\n') : null
+}
+
+function pathJoin(root, rel) {
+  return rel.startsWith('/') ? rel : `${root}/${rel}`
 }
 
 /** 读取某主题摘要（供 Skill 或 UI 使用）。 */
