@@ -1,8 +1,9 @@
+# 依赖与构建产物
 node_modules/
 *.log
 .DS_Store
 
-# zvec-grep 索引（可重建）
+# zvec-grep / 检索索引（可重建）
 .zvec-grep/
 .zgtool/
 .probe/
@@ -13,7 +14,28 @@ node_modules/
 .env.*
 credentials*
 *.key
+*.pem
+id_rsa*
+id_ed25519*
 
-# 真实个人档案绝不入库。示例语料在 examples/ 下，是显式排除的例外。
-# 若你把工作区指向本仓库（不推荐），请自行确认此处规则生效。
+# ─────────────────────────────────────────────────────────────
+# 个人档案绝不入库（第二道防线）
+#
+# 本仓库是**插件源码**。使用者的个人档案默认在 ~/mylife（工作区），
+# 与本仓库分离。下面这些规则防的是：有人把工作区指向本仓库、
+# 或把档案文件复制进来，从而误提交。
+#
+# 覆盖工作区四层结构 + 生成物 + 报告。
+# ─────────────────────────────────────────────────────────────
 workspace/
+raw/
+digest/
+claims/
+profile.yaml
+fields.yaml
+index.yaml
+report-*.md
+
+# 例外：examples/ 下的示例语料是刻意公开的演示数据（内容为虚构）
+!examples/sample-workspace/raw/
+!examples/sample-workspace/raw/*.md

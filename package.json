@@ -33,7 +33,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:live": "MYLIFE_LIVE_LLM=1 node --test test/*.test.js",
+    "check-secrets": "node scripts/check-secrets.mjs",
+    "check-secrets:history": "node scripts/check-secrets.mjs --history"
   },
   "dependencies": {
     "js-yaml": "^4.3.2"

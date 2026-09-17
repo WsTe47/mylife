@@ -18,6 +18,8 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - run: npm ci
       - run: npm test
+      - name: 密钥与个人档案泄漏自检
+        run: npm run check-secrets
       - name: 校验 bundle manifest（收录要求）
         run: |
           node -e "
