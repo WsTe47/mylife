@@ -61,6 +61,12 @@ export function inferTtlDays(name) {
  *          state ∈ fresh | expiring | stale | no-expiry | unknown
  */
 export function fieldFreshness(field, now = new Date(), warnRatio = 0.15) {
+  // 「声明了依赖但从未填过值」与「值过期」是两种不同的阻塞，必须分开报：
+  // 前者要请用户**首次填写**，后者要请他**确认是否仍准确**。
+  if (isEmptyValue(field?.value)) {
+    return { state: 'unset', ageDays: ageInDays(field?.updated_at, now), ttlDays: field?.ttl_days ?? null, remainingDays: null }
+  }
+
   const ttl = field?.ttl_days
   const updatedAt = field?.updated_at
   if (ttl === NO_EXPIRY || ttl === undefined) {
@@ -76,6 +82,19 @@ export function fieldFreshness(field, now = new Date(), warnRatio = 0.15) {
     return { state: 'expiring', ageDays: age, ttlDays: ttl, remainingDays: remaining }
   }
   return { state: 'fresh', ageDays: age, ttlDays: ttl, remainingDays: remaining }
+}
+
+/**
+ * 值是否为空（从未填写）。
+ *
+ * null / undefined / 空串 / 空数组都算空。注意 0 和 false 是**有效值**，
+ * 不能当空 —— 例如「每月结余 0」是一个有意义的事实。
+ */
+export function isEmptyValue(v) {
+  if (v === null || v === undefined) return true
+  if (typeof v === 'string') return v.trim() === ''
+  if (Array.isArray(v)) return v.length === 0
+  return false
 }
 
 /** 距今天数；无日期返回 null。 */
@@ -125,6 +144,7 @@ export function checkStaleness({ fields, decision = null, now = new Date() }) {
   const names = decision ? resolveDependencies(fields, decision) : Object.keys(fields ?? {})
   const blocking = []
   const expiring = []
+  const unset = []
   for (const name of names) {
     const field = fields?.[name]
     if (!field) continue
@@ -139,10 +159,11 @@ export function checkStaleness({ fields, decision = null, now = new Date() }) {
       state: fresh.state,
       isDecision: name === decision,
     }
-    if (fresh.state === 'stale') blocking.push(row)
+    if (fresh.state === 'unset') unset.push(row)
+    else if (fresh.state === 'stale') blocking.push(row)
     else if (fresh.state === 'expiring') expiring.push(row)
   }
-  return { decision, blocking, expiring, checked: names }
+  return { decision, blocking, expiring, unset, checked: names }
 }
 
 /**
@@ -157,9 +178,26 @@ export function renderStalenessPrompt(result, label) {
   // 防御：输出可能不完整（例如被别的投影裁剪），不能因此抛错
   const blocking = Array.isArray(result?.blocking) ? result.blocking : []
   const expiring = Array.isArray(result?.expiring) ? result.expiring : []
-  result = { ...result, blocking, expiring }
-  if (!blocking.length && !expiring.length) return null
+  const unset = Array.isArray(result?.unset) ? result.unset : []
+  result = { ...result, blocking, expiring, unset }
+  if (!blocking.length && !expiring.length && !unset.length) return null
   const lines = []
+
+  // 从未填过的字段排在最前：它们是"决策建立在空地上"的直接证据
+  if (unset.length) {
+    lines.push(
+      `回答「${label ?? result.decision ?? '这个问题'}」需要以下信息，但**你的记录里从来没有填过**：`,
+      '',
+    )
+    for (const row of unset) lines.push(`  · ${row.field}`)
+    lines.push(
+      '',
+      '这不是"过时"，是**空白** —— 也就是这个决定目前正建立在这几块没有数据的区域上。',
+      '',
+      '  [现在补上] 提供数值，我会重算',
+      '  [暂时跳过] 我会在结论里明确标注"该项无依据"，并降低确定性',
+    )
+  }
   if (blocking.length) {
     lines.push(
       `回答「${label ?? result.decision ?? '这个问题'}」需要以下信息，但它们可能已经不准了：`,
@@ -179,7 +217,8 @@ export function renderStalenessPrompt(result, label) {
     )
   }
   if (result.expiring.length) {
-    lines.push('', '另外，以下信息快到有效期了，方便时确认一下：')
+    if (lines.length) lines.push('')
+    lines.push('另外，以下信息快到有效期了，方便时确认一下：')
     for (const row of result.expiring) {
       lines.push(`  · ${row.field}（还剩约 ${row.remainingDays ?? '?'} 天）`)
     }

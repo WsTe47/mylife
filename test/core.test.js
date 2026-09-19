@@ -34,6 +34,7 @@ import {
   checkStaleness,
   fieldFreshness,
   inferTtlDays,
+  isEmptyValue,
   renderStalenessPrompt,
   resolveDependencies,
 } from '../src/lib/fields.js'
@@ -338,13 +339,17 @@ describe('L3 档案与时效引擎', () => {
     assert.equal(inferTtlDays('房贷'), 365)
   })
 
-  test('fieldFreshness 四态判定', () => {
+  test('fieldFreshness 五态判定（含 unset 与 unknown）', () => {
     const now = new Date('2026-09-17T00:00:00Z')
-    assert.equal(fieldFreshness({ updated_at: '2026-09-01', ttl_days: 90 }, now).state, 'fresh')
-    assert.equal(fieldFreshness({ updated_at: '2026-06-01', ttl_days: 90 }, now).state, 'stale')
-    assert.equal(fieldFreshness({ updated_at: '2026-07-01', ttl_days: 90 }, now).state, 'expiring')
-    assert.equal(fieldFreshness({ updated_at: '2020-01-01', ttl_days: null }, now).state, 'no-expiry')
-    assert.equal(fieldFreshness({ ttl_days: 90 }, now).state, 'unknown')
+    assert.equal(fieldFreshness({ value: 1, updated_at: '2026-09-01', ttl_days: 90 }, now).state, 'fresh')
+    assert.equal(fieldFreshness({ value: 1, updated_at: '2026-06-01', ttl_days: 90 }, now).state, 'stale')
+    assert.equal(fieldFreshness({ value: 1, updated_at: '2026-07-01', ttl_days: 90 }, now).state, 'expiring')
+    assert.equal(fieldFreshness({ value: '本科', updated_at: '2020-01-01', ttl_days: null }, now).state, 'no-expiry')
+    // 从未填过值：与"过期"不同，要请用户首次填写
+    assert.equal(fieldFreshness({ ttl_days: 90 }, now).state, 'unset')
+    assert.equal(fieldFreshness({ value: null, ttl_days: 90 }, now).state, 'unset')
+    // 有值但没有 updated_at（无法判断年龄）
+    assert.equal(fieldFreshness({ value: 1, ttl_days: 90 }, now).state, 'unknown')
   })
 
   test('依赖图递归展开并处理成环', async () => {
@@ -387,6 +392,52 @@ describe('L3 档案与时效引擎', () => {
     const r = checkStaleness({ fields: p })
     assert.equal(r.blocking.length, 1)
     assert.equal(r.blocking[0].field, '存款')
+  })
+
+  test('isEmptyValue：空值算空，但 0 与 false 是有效值', () => {
+    assert.ok(isEmptyValue(null))
+    assert.ok(isEmptyValue(undefined))
+    assert.ok(isEmptyValue('   '))
+    assert.ok(isEmptyValue([]))
+    // 这两个是关键：0 元和 false 都是有意义的事实，不能当空
+    assert.ok(!isEmptyValue(0))
+    assert.ok(!isEmptyValue(false))
+    assert.ok(!isEmptyValue('0'))
+  })
+
+  test('从未填过值的字段被识别为 unset（与 stale 分开报）', async () => {
+    await setProfileField({ field: '存款', value: null, ttlDays: 90, config })
+    await setProfileField({ field: '现职满意度', value: '低', config })
+    const p = await readProfile({ config })
+
+    const r = checkStaleness({ fields: p })
+    assert.equal(r.unset.length, 1, '空值字段应进 unset')
+    assert.equal(r.unset[0].field, '存款')
+    assert.equal(r.blocking.length, 0, '空值不该被混进 stale')
+  })
+
+  test('unset 提示要请用户首次填写，并给「跳过」的出路', async () => {
+    await setProfileField({ field: '现有存款', value: null, config })
+    const p = await readProfile({ config })
+    const r = checkStaleness({ fields: p })
+    const text = renderStalenessPrompt(r, '跳槽决策')
+    assert.ok(text.includes('从来没有填过'), '应说明是从未填写')
+    assert.ok(text.includes('空白'), '应点明这是空白而非过时')
+    assert.ok(text.includes('现在补上'))
+    assert.ok(text.includes('暂时跳过'), '必须给跳过的出路，否则会卡住用户')
+  })
+
+  test('unset 与 stale 同时存在时都要报出来', async () => {
+    await setProfileField({ field: '存款', value: null, ttlDays: 90, config })
+    await setProfileField({ field: '月收入', value: 18000, ttlDays: 180, config })
+    const p = await readProfile({ config })
+    p['月收入'].updated_at = '2020-01-01'   // 人为做旧
+    const r = checkStaleness({ fields: p })
+    assert.equal(r.unset.length, 1)
+    assert.equal(r.blocking.length, 1)
+    const text = renderStalenessPrompt(r, 'X')
+    assert.ok(text.includes('从来没有填过'))
+    assert.ok(text.includes('可能已经不准'))
   })
 
   test('提示文案必须给出「沿用旧值」选项（否则用户会被卡住）', async () => {
