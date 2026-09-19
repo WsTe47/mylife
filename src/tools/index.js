@@ -385,7 +385,9 @@ export function createTools(config = {}) {
       required: ['proposition'],
       render: (v) =>
         (v.rendered ?? '（未生成报告）') +
-        `\n\n---\n（本次分析了 ${v.corpusChars ?? '?'} 字语料：` +
+        `\n\n---\n（本次分析了 ${v.corpusChars ?? '?'} 字语料` +
+        (v.factsUsed?.length ? ` + ${v.factsUsed.length} 个已知事实：${v.factsUsed.join('、')}` : '，无已知事实') +
+        `；` +
         `削弱 ${v.summary?.weakened ?? 0} / 已排除 ${v.summary?.resolved ?? 0} / ` +
         `被否定 ${v.summary?.strengthened ?? 0} / **空白 ${v.summary?.blank ?? 0}**）`,
     }),

@@ -93,6 +93,30 @@ export function extractJson(text) {
   return null
 }
 
+/**
+ * 把结构化档案渲染成"已知事实"块。
+ *
+ * 这是**闭环的关键**：用户补上的数字必须能被检索到，
+ * 否则他填了数据，系统仍然报"空白"，闭环就断了。
+ *
+ * 只收有值的字段；空值不写进去（写了会被误当成"事实已确认"）。
+ *
+ * @param {object|null} facts - 形如 { 字段名: 值 } 或档案记录对象
+ * @returns {string} 空则返回空串
+ */
+export function renderFacts(facts) {
+  if (!facts) return ''
+  const rows = []
+  for (const [k, v] of Object.entries(facts)) {
+    const val = v !== null && typeof v === 'object' && 'value' in v ? v.value : v
+    if (val === null || val === undefined || val === '') continue
+    const shown = typeof val === 'object' ? JSON.stringify(val) : String(val)
+    rows.push(`  · ${k}：${shown}`)
+  }
+  if (!rows.length) return ''
+  return ['【已知事实（用户补充的结构化数据）】', ...rows].join('\n')
+}
+
 /** 规范化一条证伪项；缺字段就丢弃（宁可少，不要脏）。 */
 function normalizeDefeater(raw, idx) {
   if (!raw || typeof raw !== 'object') return null
@@ -146,7 +170,15 @@ const GEN_SYSTEM = `给定一个人的自述文本与他要做的主判断 P，�
   关于童年或传记的问题，以及需要外部调研或他人配合才能回答的问题。
   判断标准：如果一个理性的人要下这个决定，**必须知道这个数**，那才是 gap。`
 
-const SEARCH_SYSTEM = `判断给定的「证伪项」在原文中的证据状况，严格三选一：
+const SEARCH_SYSTEM = `判断给定的「证伪项」的证据状况。
+
+证据有两个来源，**地位相同**，都必须看：
+  1. 原文（用户的自述）
+  2. **已知事实**（结构化的档案字段 —— 用户后来补上的数字与状态）
+
+只看原文是错的：用户补了"存款 12 万"，那"存款能否支撑空窗期"就不再是空白。
+
+严格三选一：
 
   A = 原文**真的支持**这个证伪项（即它确实能削弱主判断）→ 给出逐字引用
   B = 原文用**外部事实**否定了它
@@ -156,8 +188,9 @@ const SEARCH_SYSTEM = `判断给定的「证伪项」在原文中的证据状况
   C = 原文**完全没有**相关证据
 
 铁律：
-- **禁止用常理、常识或外部知识补充。** 原文没有就是 C。
-- quotes 必须是原文里**逐字存在**的片段，不得改写、不得拼接。
+- **禁止用常理、常识或外部知识补充。** 两处都没有就是 C。
+- quotes 必须是**逐字存在**的片段（原文或已知事实），不得改写、不得拼接。
+- 已知事实若已直接回答该证伪项，应判 A 或 B（视其方向），不要仍报 C。
 - 如果是 internal 型，还要指出原文中对立的具体两句话。
 - **证伪项被"自我澄清"否定时必须判 B，不能判 A。**
   例：证伪项说"他对琐事的抱怨权重可能被高估"，
@@ -168,7 +201,7 @@ const SEARCH_SYSTEM = `判断给定的「证伪项」在原文中的证据状况
   那是**自我澄清而非矛盾**，在 note 里点明。
 - note 一句话，中性、不评判。
 
-JSON: {"verdict":"A|B|R|C","quotes":["逐字原话"],"contradiction_pair":["句1","句2"]或null,"note":""}`
+JSON: {"verdict":"A|B|R|C","quotes":["逐字片段"],"contradiction_pair":["句1","句2"]或null,"note":""}`
 
 /**
  * 生成证伪项。
@@ -204,8 +237,9 @@ export async function generateDefeaters({ proposition, corpus, llm }) {
  * @param {Function} params.llm
  * @returns {Promise<object[]>} 每条附 verdict / quotes / contradiction_pair / note
  */
-export async function searchDefeaters({ defeaters, corpus, llm }) {
+export async function searchDefeaters({ defeaters, corpus, facts = null, llm }) {
   const out = []
+  const factsBlock = renderFacts(facts)
   for (const d of defeaters ?? []) {
     let verdict = 'C'
     let quotes = []
@@ -219,7 +253,9 @@ export async function searchDefeaters({ defeaters, corpus, llm }) {
             role: 'user',
             content:
               `证伪项：${d.proposition}\n类型：${d.type}\n` +
-              `判定所需证据：${d.evidence_needed ?? '（未指定）'}\n\n原文：\n${corpus}`,
+              `判定所需证据：${d.evidence_needed ?? '（未指定）'}\n\n` +
+              (factsBlock ? `${factsBlock}\n\n` : '') +
+              `原文：\n${corpus}`,
           },
         ],
         { json: true, maxTokens: 800 },
@@ -250,9 +286,11 @@ export async function searchDefeaters({ defeaters, corpus, llm }) {
  * @param {Function} params.llm
  * @returns {Promise<{proposition: string, results: object[], summary: object}>}
  */
-export async function buildDefeaterAnalysis({ proposition, corpus, llm }) {
+export async function buildDefeaterAnalysis({ proposition, corpus, facts = null, llm }) {
+  // 生成阶段只看原文（证伪项要从他的自述里长出来），
+  // 检索阶段必须同时看原文与已知事实 —— 否则补了数据也认不出来。
   const defeaters = await generateDefeaters({ proposition, corpus, llm })
-  const results = await searchDefeaters({ defeaters, corpus, llm })
+  const results = await searchDefeaters({ defeaters, corpus, facts, llm })
   const summary = {
     total: results.length,
     weakened: results.filter((r) => r.verdict === 'A').length,

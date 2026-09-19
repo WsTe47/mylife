@@ -135,15 +135,23 @@ export async function execute(toolName, args = {}, config = {}) {
         )
       }
       const llm = args._llm ?? (await createLlm(config))
+      // **闭环的关键**：把结构化档案作为"已知事实"一并送去检索。
+      // 否则用户补了存款/收入，证伪链仍然报"空白" —— 补了也认不出来。
+      const facts = await readProfile({ config })
       const analysis = await buildDefeaterAnalysis({
         proposition: args.proposition,
         corpus,
+        facts,
         llm,
       })
+      const filled = Object.entries(facts).filter(
+        ([, v]) => v?.value !== null && v?.value !== undefined && v?.value !== '',
+      )
       return {
         ...analysis,
         rendered: renderDefeaterReport(analysis),
         corpusChars: corpus.length,
+        factsUsed: filled.map(([k]) => k),
       }
     }
 

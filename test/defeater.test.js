@@ -15,6 +15,7 @@ import {
   extractJson,
   generateDefeaters,
   renderDefeaterReport,
+  renderFacts,
   searchDefeaters,
 } from '../src/lib/defeater.js'
 import { readKeyFromDshCredentials, resolveLlmConfig } from '../src/lib/llm.js'
@@ -273,6 +274,83 @@ describe('渲染措辞纪律（不可退让）', () => {
     const text = renderDefeaterReport({ proposition: 'P', results })
     assert.ok(text.includes('我很感谢领导'))
     assert.ok(text.includes('我相信我没有这种热爱了'))
+  })
+})
+
+describe('已知事实作为证据源（闭环关键）', () => {
+  test('renderFacts 只收有值的字段', () => {
+    const block = renderFacts({
+      现有存款: { value: 120000 },
+      月税后收入: { value: null },
+      外部机会: { value: '' },
+      降薪接受度: { value: '不接受' },
+      兼职收入: 0,
+    })
+    assert.ok(block.includes('现有存款：120000'))
+    assert.ok(block.includes('降薪接受度：不接受'))
+    assert.ok(!block.includes('月税后收入'), '空值不该写成事实')
+    assert.ok(!block.includes('外部机会'), '空串不该写成事实')
+    // 0 是有效值，必须保留
+    assert.ok(block.includes('兼职收入：0'))
+  })
+
+  test('facts 为空时返回空串（不产生空标题）', () => {
+    assert.equal(renderFacts(null), '')
+    assert.equal(renderFacts({}), '')
+    assert.equal(renderFacts({ a: { value: null } }), '')
+  })
+
+  test('检索提示里带上已知事实块', async () => {
+    const calls = []
+    const llm = async (msgs) => {
+      calls.push(msgs[msgs.length - 1].content)
+      if (msgs[0].content.includes('生成证伪项')) {
+        return JSON.stringify({ defeaters: [{ proposition: '存款能撑多久', type: 'gap' }] })
+      }
+      return JSON.stringify({ verdict: 'B', quotes: ['存款 12 万'], note: '已知事实否定了它' })
+    }
+    await searchDefeaters({
+      defeaters: [{ id: 'D1', type: 'gap', proposition: '存款能撑多久' }],
+      corpus: '原文内容',
+      facts: { 现有存款: { value: 120000 } },
+      llm,
+    })
+    const searchPrompt = calls[calls.length - 1]
+    assert.ok(searchPrompt.includes('已知事实'), '检索时必须带已知事实')
+    assert.ok(searchPrompt.includes('现有存款：120000'))
+    assert.ok(searchPrompt.includes('原文内容'), '原文也不能丢')
+  })
+
+  test('未传 facts 时提示里没有已知事实块（向后兼容）', async () => {
+    let searchPrompt = ''
+    const llm = async (msgs) => {
+      if (msgs[0].content.includes('生成证伪项')) {
+        return JSON.stringify({ defeaters: [{ proposition: 'x', type: 'gap' }] })
+      }
+      searchPrompt = msgs[msgs.length - 1].content
+      return JSON.stringify({ verdict: 'C' })
+    }
+    await searchDefeaters({
+      defeaters: [{ id: 'D1', type: 'gap', proposition: 'x' }],
+      corpus: 'c',
+      llm,
+    })
+    assert.ok(!searchPrompt.includes('【已知事实'))
+  })
+
+  test('buildDefeaterAnalysis 透传 facts', async () => {
+    let sawFacts = false
+    const llm = async (msgs) => {
+      if (msgs[0].content.includes('生成证伪项')) {
+        return JSON.stringify({ defeaters: [{ proposition: 'x', type: 'gap' }] })
+      }
+      if (msgs[msgs.length - 1].content.includes('已知事实')) sawFacts = true
+      return JSON.stringify({ verdict: 'A' })
+    }
+    await buildDefeaterAnalysis({
+      proposition: 'P', corpus: 'c', facts: { 存款: { value: 1 } }, llm,
+    })
+    assert.ok(sawFacts, 'facts 必须一路透传到检索阶段')
   })
 })
 
