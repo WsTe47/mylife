@@ -120,6 +120,33 @@ description:
 - `en` / `zh` 均以句号结尾
 - PR 正文逐条对着实现说明了描述里的每个断言
 
+### CI 结果（全部通过）
+
+| 检查 | 结果 | 说明 |
+|---|---|---|
+| `check` | ✅ **pass**（7m37s） | awesome-lint ✓ / READMEs 一致性 ✓ / 目录规范 ✓ / locale parity + 日期推导 + 模板构建 ✓ |
+| `Submission gate` | ✅ **pass** | `dsh.bundle` 声明 ✓ / 仓库年龄 ✓ / commit 数 ✓ |
+| Stale-fork guard | ✅ pass | 未删除任何既有条目 |
+
+**关于「只提 yml 文件」**：CI 明确接受这种形态 ——
+官方注释原文："yml only — the common case now. sync-readme.yml regenerates
+on main after the merge."，即合并后自动重建 README，贡献者不需要手工生成。
+
+**当前状态：等待维护者评审。**
+
+### 合并后会自动发生什么
+
+1. `sync-readme.yml` 重建两个 README
+2. 网站自动重建（官方："The website rebuilds automatically after merge"）
+3. `awesome-dsh-plugin.com/plugins.json` 更新 → **`dsh-market` 自动收录**
+   （市场读的就是这个目录，所以不需要单独向市场提交）
+
+验证方式（合并后）：
+```sh
+curl -s https://awesome-dsh-plugin.com/plugins.json | grep -c "WsTe47/mylife"   # 应 ≥ 1
+```
+然后在 DSH 里 Settings → Plugin Market 搜 `mylife`。
+
 ---
 
 ## 仍阻塞：npm 登录
