@@ -27,6 +27,7 @@
   },
   "files": [
     "src",
+    "scripts",
     "skills",
     "cordis.patch.yml",
     "README.md",
@@ -50,5 +51,8 @@
     "type": "git",
     "url": "git+https://github.com/WsTe47/mylife.git"
   },
-  "author": "WsTe47"
+  "author": "WsTe47",
+  "bundleDependencies": [
+    "js-yaml"
+  ]
 }

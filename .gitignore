@@ -3,6 +3,10 @@ node_modules/
 *.log
 .DS_Store
 
+# npm pack 产出的 tarball（发布资产，不入库）
+*.tgz
+.local/
+
 # zvec-grep / 检索索引（可重建）
 .zvec-grep/
 .zgtool/
