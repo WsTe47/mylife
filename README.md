@@ -301,6 +301,14 @@ dsh --profile headless "你可用工具里 mylife_ 开头的有几个？"
 | `mylife_profile_set` | 写档案字段（带来源与有效期；依赖关系由它声明） |
 | `mylife_staleness_check` | 检查某决策依赖的字段是否过期 |
 | `mylife_conclusion_add` | 登记结论并绑定依据（无依据会被标记） |
+| `mylife_defeaters` | **证伪链**：什么能推翻这个判断（含"空白"判定） |
+| `mylife_pending` | **取待填项**：空白字段 + 卡住的决策 + 现成问句 |
+| `mylife_ask` | 为某字段生成问句（模板优先，带示例与跳过出路） |
+| `mylife_answer` | 记录回答；**跳过/不清楚不写档案** |
+| `mylife_recompute` | 重算对比：填前 → 填后的机械差异 |
+
+这最后四个是**闭环**：`pending → ask → answer → recompute`。
+没有它们，Agent 就只能自己翻档案猜还缺什么 —— 而这个项目过去正是如此。
 
 配套 Skill：`skills/mylife-decision/SKILL.md` —— 决策流程与语气约束。
 
@@ -397,8 +405,8 @@ src/
 - [x] 对比引擎（填前 vs 填后的**机械差异**，不替用户判断"更可靠了"）
 - [x] 决策报告装配器（**可判定性由数据决定**；八段落不可省略）
 - [x] 敏感场景三层模型（日常 / 持续痛苦 / 危机信号）
-- [x] 12 个工具 + 决策流程 Skill
-- [x] **137 个测试**，含三条不变式的回归守卫
+- [x] **16 个工具** + 决策流程 Skill，含闭环四件套（pending / ask / answer / recompute）
+- [x] **164 个测试**，含三条不变式的回归守卫
 - [x] 代码与档案分离的三道防护（`.gitignore` + 密钥扫描 + CI 强制）
 
 **第二阶段（计划中）**
