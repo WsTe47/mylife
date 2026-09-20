@@ -18,6 +18,11 @@ import {
   planProfileUpdates,
   unsetFields,
 } from '../src/lib/pending.js'
+import { execute } from '../src/tools/execute.js'
+import { createTools } from '../src/tools/index.js'
+import { promises as fs } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 describe('draftQuestion（模板优先）', () => {
   test('常见字段命中对应模板，且都带示例', () => {
@@ -204,5 +209,79 @@ describe('planProfileUpdates', () => {
 
   test('空输入不崩', () => {
     assert.deepEqual(planProfileUpdates(), { updates: [], skipped: [], unclear: [] })
+  })
+})
+
+
+// ─────────────────────────────────────────────────────────────
+// 工具层：闭环四件套
+// ─────────────────────────────────────────────────────────────
+
+describe('闭环四件套（工具层集成）', () => {
+  let tmp, cfg
+  const T = (n) => createTools(cfg).find((t) => t.name === n)
+  const text = (n, v) => T(n).output.render({}, v)[0].text
+
+  async function seed() {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'mylife-loop-'))
+    cfg = { workspaceRoot: tmp }
+    await execute('mylife_profile_set', { field: '现有存款', value: null, ttl_days: 90 }, cfg)
+    await execute('mylife_profile_set', { field: '跳槽决策', value: '未定', ttl_days: null, depends_on: ['现有存款'] }, cfg)
+  }
+
+  test('pending 报出卡点并给出可直接用的问句', async () => {
+    await seed()
+    const p = await execute('mylife_pending', {}, cfg)
+    assert.equal(p.unset.length, 1)
+    assert.equal(p.blockedDecisions.length, 1)
+    const t = text('mylife_pending', p)
+    assert.ok(t.includes('卡在空白上'))
+    assert.ok(t.includes('你的「现有存款」大概是多少？'), '应给出成品问句')
+    assert.ok(t.includes('示例'), '必须带示例')
+    assert.ok(t.includes('跳过'), '必须保留跳过出路')
+    await fs.rm(tmp, { recursive: true, force: true })
+  })
+
+  test('ask 模板命中时不调 LLM', async () => {
+    await seed()
+    const a = await execute('mylife_ask', { field: '现有存款' }, cfg)
+    assert.equal(a.drafted_by, 'template')
+    assert.ok(text('mylife_ask', a).includes('跳过'))
+    await fs.rm(tmp, { recursive: true, force: true })
+  })
+
+  test('answer：回答写入，跳过不写入', async () => {
+    await seed()
+    const ok = await execute('mylife_answer', { field: '现有存款', answer: '12 万' }, cfg)
+    assert.equal(ok.status, 'answered')
+    assert.equal(ok.value, '12 万')
+
+    await execute('mylife_profile_set', { field: '外部机会', value: null, ttl_days: 90 }, cfg)
+    const skip = await execute('mylife_answer', { field: '外部机会', answer: '跳过' }, cfg)
+    assert.equal(skip.status, 'skipped')
+    assert.equal(skip.written, false, '跳过不得写档案')
+
+    const { readProfile } = await import('../src/lib/store.js')
+    const f = await readProfile({ config: cfg })
+    assert.equal(f['现有存款'].value, '12 万')
+    assert.equal(f['外部机会'].value, null, '跳过绝不能产生数值')
+    await fs.rm(tmp, { recursive: true, force: true })
+  })
+
+  test('recompute：首次无基线，填后能看到差异', async () => {
+    await seed()
+    const first = await execute('mylife_recompute', { decision: '跳槽决策' }, cfg)
+    assert.equal(first.baseline, false)
+    assert.ok(first.rendered.includes('没有可对比的基线'), '不得假装有对比')
+
+    await execute('mylife_answer', { field: '现有存款', answer: '12 万' }, cfg)
+    const second = await execute('mylife_recompute', { decision: '跳槽决策' }, cfg)
+    assert.equal(second.baseline, true)
+    assert.equal(second.diff.coverage, 1)
+    assert.equal(second.diff.decidable, true)
+    const t = text('mylife_recompute', second)
+    assert.ok(t.includes('填充覆盖率'))
+    assert.ok(t.includes('那是你的判断'), '不得替用户判断结论更可靠')
+    await fs.rm(tmp, { recursive: true, force: true })
   })
 })
