@@ -24,6 +24,16 @@ import { checkStaleness, fieldFreshness, inferTtlDays } from '../lib/fields.js'
 import { buildCounterEvidence } from '../lib/evidence.js'
 import { buildDefeaterAnalysis, renderDefeaterReport } from '../lib/defeater.js'
 import { createLlm } from '../lib/llm.js'
+import {
+  draftQuestion,
+  interpretAnswer,
+  pendingItems,
+  planProfileUpdates,
+} from '../lib/pending.js'
+import { diffSnapshots, renderComparison, snapshotState } from '../lib/compare.js'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { writeText } from '../lib/workspace.js'
 import { readTextOrNull, layout, resolveRoot } from '../lib/workspace.js'
 
 /**
@@ -155,6 +165,67 @@ export async function execute(toolName, args = {}, config = {}) {
       }
     }
 
+    // ── 闭环入口：取空白 / 提问 / 记录回答 ────────────────────
+    case 'mylife_pending':
+      return buildPending(config, args)
+
+    case 'mylife_ask': {
+      const fields = await readProfile({ config })
+      const rec = fields[args.field]
+      const note = rec?.provenance ?? args.why ?? null
+      const base = draftQuestion(args.field, { note })
+      // 模板已命中就不花 LLM —— 措辞稳定、零成本、可离线。
+      // 只有模板回退（未知字段）且给了 corpus 时才请 LLM 定制。
+      const isFallback = base.question.startsWith('「') && base.question.includes('没有依据')
+      if (!isFallback || !args.corpus || !args.use_llm) {
+        return { ...base, drafted_by: 'template' }
+      }
+      try {
+        const llm = args._llm ?? (await createLlm(config))
+        const text = await llm([
+          { role: 'system', content:
+            '你在帮一个人补全他个人档案里缺的一个字段。基于他的自述原文，' +
+            '生成**一句**问他这个字段的追问。要求：\n' +
+            '- 用他自己的语境，不要通用套话\n' +
+            '- 只问一个信息点\n' +
+            '- 不要替他猜答案，不要给建议\n' +
+            '- 直接输出那句话，不要解释' },
+          { role: 'user', content: `需要补的字段：${args.field}\n\n他的自述：\n${String(args.corpus).slice(0, 12000)}` },
+        ], { maxTokens: 200 })
+        return { ...base, question: text.trim().replace(/^["「]|["」]$/g, ''), drafted_by: 'llm' }
+      } catch (err) {
+        return { ...base, drafted_by: 'template', llm_error: err?.message ?? String(err) }
+      }
+    }
+
+    case 'mylife_answer': {
+      const parsed = interpretAnswer(args.answer)
+      if (parsed.status === 'answered') {
+        const r = await setProfileField({
+          field: args.field,
+          value: parsed.value,
+          // 用户口述 → user_filled；标明是"回答追问"得来的
+          source: 'user_filled',
+          ttlDays: args.ttl_days,
+          provenance: `用户在追问中回答（${new Date().toISOString().slice(0, 10)}）`,
+          config,
+        })
+        return { field: args.field, status: 'answered', value: parsed.value, ttl_days: r.ttl_days }
+      }
+      // skipped / unclear：**不写档案**，只如实回报
+      return {
+        field: args.field,
+        status: parsed.status,
+        value: null,
+        note: parsed.note,
+        written: false,
+      }
+    }
+
+    // ── 闭环：重算对比 ──────────────────────────────────────
+    case 'mylife_recompute':
+      return recompute({ decision: args.decision, stage: args.stage, config })
+
     // ── 开场简报 ────────────────────────────────────────────
     case 'mylife_status':
       return buildStatus(config)
@@ -237,6 +308,88 @@ export async function buildStatus(config = {}) {
     unsourcedClaims: active.filter((c) => !c.provenance).map((c) => c.id),
     hasAnything: fieldNames.length > 0 || active.length > 0,
   }
+}
+
+/**
+ * 取全部待办：空白字段 + 卡住的决策 + 现成问句。
+ *
+ * 这是闭环的第一步 —— 过去没有它，agent 只能自己翻档案猜还缺什么。
+ *
+ * @param {object} config
+ * @param {object} [args]
+ */
+export async function buildPending(config = {}, args = {}) {
+  const fields = await readProfile({ config })
+  const status = await buildStatus(config)
+  const decision = args.decision ?? null
+  const staleness = checkStaleness({ fields, decision })
+  const items = pendingItems({
+    fields,
+    staleness,
+    decisions: status.decisions ?? [],
+  })
+  return { ...items, decision, fieldsTotal: Object.keys(fields).length }
+}
+
+/**
+ * 重算：与上一次快照对比。
+ *
+ * 闭环的最后一步 —— 用户补完字段后，必须能看见**到底变了什么**，
+ * 否则他不会知道自己刚才那几分钟换来了什么。
+ *
+ * 快照落在工作区的 `.compare-<decision>.json`（点开头，不进 git）。
+ * 首次调用（无旧快照）时只落一份，并如实告知"没有可对比的基线"。
+ *
+ * @param {object} params
+ * @param {string} [params.decision]
+ * @param {string} [params.stage] - 覆盖阶段标记
+ * @param {object} params.config
+ */
+export async function recompute({ decision = null, stage = null, config = {} }) {
+  const root = resolveRoot(config)
+  const key = decision ? decision.replace(/[^\w\u4e00-\u9fff-]/g, '_') : 'all'
+  const snapFile = path.join(root, `.compare-${key}.json`)
+
+  const after = await snapshotState({ stage: stage ?? 'after', decision, config })
+
+  let before = null
+  try {
+    before = JSON.parse(await fs.readFile(snapFile, 'utf8'))
+  } catch {
+    before = null
+  }
+
+  await writeText(snapFile, JSON.stringify(after, null, 2))
+
+  if (!before) {
+    return {
+      decision,
+      baseline: false,
+      after,
+      rendered:
+        `## 已存下基线（决策：${decision ?? '（未指定）'}）\n\n` +
+        `这是第一次重算，**没有可对比的基线**。\n` +
+        `当前填充覆盖率：${Math.round(ratio(after))}%。\n\n` +
+        `补完字段后再调一次本工具，就能看到「填前 → 填后」的差异。`,
+    }
+  }
+
+  const diff = diffSnapshots(before, after)
+  return {
+    decision,
+    baseline: true,
+    before,
+    after,
+    diff,
+    rendered: renderComparison({ before, after, diff }),
+  }
+}
+
+function ratio(snap) {
+  const deps = snap?.dependencies ?? []
+  if (!deps.length) return 0
+  const filled = new Set(snap.filled ?? [])
+  return deps.filter((d) => filled.has(d)).length / deps.length
 }
 
 /**

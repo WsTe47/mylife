@@ -392,7 +392,138 @@ export function createTools(config = {}) {
         `被否定 ${v.summary?.strengthened ?? 0} / **空白 ${v.summary?.blank ?? 0}**）`,
     }),
 
-    // ── 12. 开场简报 ──────────────────────────────────────────
+    // ── 12. 闭环：取空白 ─────────────────────────────────────
+    tool({
+      name: 'mylife_pending',
+      description:
+        '取全部**待填项**：哪些字段从未填写、哪个决策正卡在空白上、以及可以直接用的问句。\n\n' +
+        '这是「空白 → 提问 → 填档 → 重算」闭环的**第一步**。\n' +
+        '**在要下任何结论之前先调它** —— 如果返回的 blockedDecisions 非空，' +
+        '说明这个决定目前建立在没有数据的区域上。\n\n' +
+        '⚠️ 拿到 questions 后，用 mylife_ask 逐个问用户，用 mylife_answer 记录回答。\n' +
+        '⚠️ 用户说"跳过"是完全允许的 —— 不得替他假设数值。',
+      properties: {
+        decision: { type: 'string', description: '只关心某个决策字段时传入；省略则看全档案' },
+      },
+      render: (v) => {
+        if (!v || v.total === 0) {
+          return '没有待填项 —— 所有字段都已填写，且没有过期。\n可以正常作答。'
+        }
+        const lines = [`## 待填项：${v.total} 处`, '']
+
+        if (v.blockedDecisions?.length) {
+          lines.push('### 有决策正卡在空白上', '')
+          for (const d of v.blockedDecisions) {
+            const miss = [...(d.missing ?? []), ...(d.stale ?? [])]
+            lines.push(`- **${d.field}**（当前：${JSON.stringify(d.value)}）`)
+            lines.push(`  - 缺：${miss.join('、')}`)
+          }
+          lines.push('')
+        }
+
+        if (v.unset?.length) {
+          lines.push('### 从未填写的字段', '')
+          for (const u of v.unset) lines.push(`- ${u.field}`)
+          lines.push('')
+        }
+
+        if (v.questions?.length) {
+          lines.push('### 可以直接用的问句', '')
+          for (const q of v.questions) {
+            lines.push(`**${q.field}**${q.stale ? '（已过期，需确认是否仍准确）' : ''}`)
+            lines.push(`> ${q.question}`)
+            if (q.hint) lines.push(`> （示例：${q.hint}）`)
+            if (q.why) lines.push(`> 为什么需要：${q.why}`)
+            lines.push('')
+          }
+        }
+
+        lines.push(
+          '---',
+          '',
+          '**逐个问用户**（一次一个，别一次全抛）。每个都要留"暂时跳过"的出路。',
+          '用户回答后用 mylife_answer 记录；跳过就如实标为无依据，**不要替他假设数值**。',
+          '填完后用 mylife_recompute 看重算结果。',
+        )
+        return lines.join('\n')
+      },
+    }),
+
+    // ── 13. 闭环：生成问句 ───────────────────────────────────
+    tool({
+      name: 'mylife_ask',
+      description:
+        '为**某个字段**生成一句问用户的话。默认走模板（措辞稳定、零成本、可离线）；' +
+        '只有字段名匹配不到模板、且传了 corpus 与 use_llm=true 时，才请 LLM 结合他的自述定制。\n\n' +
+        '返回里带 hint（示例）—— **务必把示例一起给用户**，他常常不知道怎么答才算"够用"。',
+      properties: {
+        field: { type: 'string', description: '要补的字段名' },
+        why: { type: 'string', description: '为什么需要它（可选，会一并展示给用户）' },
+        corpus: { type: 'string', description: '用户的自述原文（可选，用于 LLM 定制问句）' },
+        use_llm: { type: 'boolean', description: '允许 LLM 定制（仅模板未命中时生效）' },
+      },
+      required: ['field'],
+      render: (v) => {
+        const lines = [`**${v.field}**`, '', `> ${v.question}`]
+        if (v.hint) lines.push(`>`, `> 示例：${v.hint}`)
+        if (v.why) lines.push(`>`, `> 为什么需要：${v.why}`)
+        lines.push('', `>`, `> 你可以回答，也可以说"跳过" —— 跳过我会记为无依据，不替你猜。`)
+        if (v.drafted_by === 'llm') lines.push('', '（这句是结合你的自述定制的）')
+        if (v.llm_error) lines.push('', `（LLM 定制失败，已回退模板：${v.llm_error}）`)
+        return lines.join('\n')
+      },
+    }),
+
+    // ── 14. 闭环：记录回答 ───────────────────────────────────
+    tool({
+      name: 'mylife_answer',
+      description:
+        '记录用户对某个字段的回答，并写入档案。\n\n' +
+        '三种结果，都会如实回报：\n' +
+        '  · answered —— 原样存下用户的话（**不改写**）\n' +
+        '  · skipped  —— 用户选择不填。**不写档案**，只回报；结论里必须标注该项无依据\n' +
+        '  · unclear  —— 用户表示不清楚。**同样不写档案**，也不替他估算\n\n' +
+        '⚠️ 后两种情况下**绝不要替他假设数值** —— 那会让整份报告失去意义。',
+      properties: {
+        field: { type: 'string', description: '字段名' },
+        answer: { type: 'string', description: '用户的回答原文（逐字，不要润色）' },
+        ttl_days: { type: 'integer', description: '有效期天数；省略则按字段名自动推断' },
+      },
+      required: ['field', 'answer'],
+      render: (v) => {
+        if (v.status === 'answered') {
+          return (
+            `已记录 **${v.field}** = ${JSON.stringify(v.value)}\n` +
+            `  有效期：${v.ttl_days === null || v.ttl_days === undefined ? '不过期' : v.ttl_days + ' 天'}` +
+            (v.ttl_days === undefined ? '（按字段名推断）' : '')
+          )
+        }
+        const label = v.status === 'skipped' ? '用户选择不填' : '用户表示不清楚'
+        return (
+          `**${v.field}**：${label} —— **未写入档案**\n` +
+          `  ${v.note}\n` +
+          '  → 后续结论里，凡是依赖它的部分都必须标注"该项无依据"，并降低确定性。'
+        )
+      },
+    }),
+
+    // ── 15. 闭环：重算对比 ───────────────────────────────────
+    tool({
+      name: 'mylife_recompute',
+      description:
+        '重算并与上一次快照对比，产出「填前 → 填后」的**机械差异**：' +
+        '依赖字段填充覆盖率、这次补上了什么、还剩哪些空白、决策是否已可判定。\n\n' +
+        '闭环的最后一步。用户补完字段后调它 —— 否则他不会知道自己刚才那几分钟换来了什么。\n\n' +
+        '首次调用没有基线，只会存下一份并如实告知。' +
+        '输出**只陈述机械差异**，不替用户判断"结论更可靠了" —— 那是他的判断。',
+      properties: {
+        decision: { type: 'string', description: '决策字段名；省略则对比全档案' },
+        stage: { type: 'string', description: '阶段标记，默认 after' },
+      },
+      render: (v) => v.rendered ?? '（未生成对比）',
+    }),
+
+    // ── 16. 开场简报 ──────────────────────────────────────────
     tool({
       name: 'mylife_status',
       description:
