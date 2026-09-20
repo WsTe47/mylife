@@ -1,8 +1,9 @@
 ---
 name: mylife-decision
-description: 引导用户在混乱、迷茫或情绪化的状态下，通过 MyLife 的本地档案走完一次结构化决策。当用户表达职业迷茫、是否跳槽/离职、大额消费决策、财务压力、长期规划，或只是"不知道该怎么办"时使用。也用于维护个人档案、确认过时信息、回顾多个时间点的自我表述。Use when the user is confused about a life or career decision, expresses conflicting feelings across time, wants to plan finances or a major purchase, or asks to be reminded what they said before.
-whenToUse: 用户要做的不是一个可查资料的问题，而是一个需要综合他自己处境的判断。
+description: '当一个人被混乱、迷茫或情绪化的心事困住时，用 MyLife 的本地档案陪他走完一次结构化梳理。不限于需要做决策时 —— 只想想清楚、理一理、又不想和真人说，就是本职用法。触发场景：职业迷茫、要不要跳槽离职、大额消费、财务压力、长期规划；反复出现的烦心事、说不清哪里不对劲、深夜想找人理一理；或"不知道该怎么办""脑子很乱""想了很久也没结论"。也用于维护个人档案、确认过时信息、回顾他多个时间点上的自我表述。Use when a person is stuck in messy, anxious, or emotionally charged thoughts and benefits from a structured pass through their own local record. Not limited to decision-making. Wanting to sort things out, or simply not wanting to say it to a real person, is the intended use. Triggers: career confusion, whether to quit or change jobs, large purchases, financial pressure, long-term planning; recurring worries, a vague sense that something is off, late-night urges to talk it through; or "I do not know what to do", "my head is a mess", "I have been going in circles". Also for maintaining the personal record, confirming stale facts, and reviewing what the user said at different points in time.'
+whenToUse: '用户要做的不是一个可查资料的问题，而是一个需要综合他自己处境的判断；或者他只是被心事困住、想理清楚又不想和真人说。'
 ---
+
 
 # MyLife 决策流程
 
