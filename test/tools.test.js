@@ -319,6 +319,55 @@ describe('开场简报', () => {
     assert.ok(rendered.includes('不要假装了解用户'))
   })
 
+  test('⚠️ 空白字段必须出现在简报里（曾经完全隐形）', async () => {
+    // 回归守卫：这是真实缺陷 —— status 只过滤 stale/expiring，
+    // 于是 value:null 的占位字段在简报里看不见，agent 会以为数据齐全。
+    await execute('mylife_profile_set', { field: '现有存款', value: null }, cfg)
+    await execute('mylife_profile_set', { field: '月税后收入', value: null }, cfg)
+
+    const s = await buildStatus(cfg)
+    assert.ok(s.fields.unset, 'status 必须给出 unset 列表')
+    assert.equal(s.fields.unset.length, 2)
+
+    const text = createTools(cfg)
+      .find((t) => t.name === 'mylife_status')
+      .output.render({}, s)[0].text
+    assert.ok(text.includes('现有存款'), '空字段必须被点名')
+    assert.ok(text.includes('月税后收入'))
+    assert.ok(text.includes('从未填写'), '必须说清这是空白而非正常')
+    assert.ok(text.includes('不是"没问题"'), '不得让空白看起来像没事')
+  })
+
+  test('决策卡在空白上时必须报出，并指示 agent 先问用户', async () => {
+    await execute('mylife_profile_set', { field: '现有存款', value: null, ttl_days: 90 }, cfg)
+    await execute('mylife_profile_set', {
+      field: '裸辞决策', value: '未定', ttl_days: null, depends_on: ['现有存款'],
+    }, cfg)
+
+    const s = await buildStatus(cfg)
+    assert.equal(s.blockedDecisions.length, 1)
+    assert.equal(s.blockedDecisions[0].field, '裸辞决策')
+    assert.deepEqual(s.blockedDecisions[0].unset, ['现有存款'])
+    assert.equal(s.blockedDecisions[0].decidable, false)
+
+    const text = createTools(cfg)
+      .find((t) => t.name === 'mylife_status')
+      .output.render({}, s)[0].text
+    assert.ok(text.includes('卡在空白上'))
+    assert.ok(text.includes('先把上面缺的字段问出来'), '必须给出下一步指令')
+    assert.ok(text.includes('暂时跳过'), '必须保留跳过出路，禁止替用户假设')
+  })
+
+  test('依赖齐全的决策不算卡住', async () => {
+    await execute('mylife_profile_set', { field: '存款', value: 120000, ttl_days: 90 }, cfg)
+    await execute('mylife_profile_set', {
+      field: 'D', value: '未定', ttl_days: null, depends_on: ['存款'],
+    }, cfg)
+    const s = await buildStatus(cfg)
+    const d = s.blockedDecisions.find((x) => x.field === 'D')
+    assert.equal(d, undefined, '依赖齐全的决策不该出现在受阻列表')
+  })
+
   test('有内容时汇总字段、主题与过期项', async () => {
     await execute('mylife_profile_set', { field: '月收入', value: 18000, ttl_days: 180 }, cfg)
     await execute('mylife_claim_add', { claim: 'a', topic: '职业去留' }, cfg)

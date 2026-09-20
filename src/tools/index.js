@@ -411,33 +411,62 @@ export function createTools(config = {}) {
           )
         }
         const lines = ['## 我现在的状态', '']
-        lines.push(`- 档案字段：${v.fields.total} 个`)
+
+        const unset = v.fields.unset ?? []
+        const blocked = v.blockedDecisions ?? []
+
+        // ⚠️ 空白排在最前。它不是"没问题"，它就是问题本身。
+        if (unset.length) {
+          lines.push(
+            `### ⚠️ 有 ${unset.length} 个字段从未填写 —— 这是空白，不是"没问题"`,
+            '',
+          )
+          for (const f of unset) lines.push(`- **${f.field}**`)
+          lines.push('')
+        }
+
+        if (blocked.length) {
+          lines.push('### 有决策正卡在空白上', '')
+          for (const d of blocked) {
+            const missing = [...(d.unset ?? []), ...(d.stale ?? [])]
+            lines.push(`- **${d.field}**（当前：${JSON.stringify(d.value)}）`)
+            lines.push(`  - 缺：${missing.join('、')}`)
+          }
+          lines.push(
+            '',
+            '**在回答涉及这些决策的问题之前，先把上面缺的字段问出来。**',
+            '给用户的提示里必须包含"暂时跳过"这个选项 —— 不要替他假设数值。',
+            '',
+          )
+        }
+
+        lines.push('## 其余状态', '')
+        lines.push(`- 档案字段：${v.fields.total} 个（其中 ${unset.length} 个为空）`)
         if (v.fields.stale.length) {
-          lines.push(`- ⚠️ 已过期，需先确认：`)
+          lines.push('- ⚠️ 已过期，需先确认：')
           for (const f of v.fields.stale) {
-            lines.push(`    · ${f.field} = ${JSON.stringify(f.value)}（${f.ageDays} 天前，有效期 ${f.ttlDays} 天）`)
+            lines.push(
+              `    · ${f.field} = ${JSON.stringify(f.value)}` +
+                `（${f.ageDays} 天前，有效期 ${f.ttlDays} 天）`,
+            )
           }
         }
         if (v.fields.expiring.length) {
           lines.push(`- 快到有效期：${v.fields.expiring.map((f) => f.field).join('、')}`)
         }
-        lines.push(`- 证据：${v.claims.active} 条有效` +
-          (v.claims.superseded ? `、${v.claims.superseded} 条已作废` : '') +
-          (v.claims.disputed ? `、${v.claims.disputed} 条待确认` : ''))
+        lines.push(
+          `- 证据：${v.claims.active} 条有效` +
+            (v.claims.superseded ? `、${v.claims.superseded} 条已作废` : '') +
+            (v.claims.disputed ? `、${v.claims.disputed} 条待确认` : ''),
+        )
         if (v.claims.topics.length) lines.push(`- 涉及主题：${v.claims.topics.join('、')}`)
         lines.push(`- 已登记结论：${v.conclusions} 条`)
-        if (v.unsourcedClaims.length) {
+
+        if (v.unsourcedClaims?.length) {
           lines.push(
             '',
             `⚠️ 有 ${v.unsourcedClaims.length} 条证据没有出处（${v.unsourcedClaims.join('、')}）。` +
               '它们**不得被当作已确认的事实**；引用前请先用 mylife_trace 检查。',
-          )
-        }
-        if (v.fields.stale.length) {
-          lines.push(
-            '',
-            '**在回答涉及上述过期字段的问题之前，必须先请用户确认这些信息。**' +
-              '给用户的提示里要包含"沿用旧值"这个选项。',
           )
         }
         return lines.join('\n')

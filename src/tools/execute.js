@@ -188,6 +188,16 @@ export async function buildStatus(config = {}) {
   const stale = freshness.filter((f) => f.state === 'stale')
   const expiring = freshness.filter((f) => f.state === 'expiring')
 
+  // ⚠️ 关键：从未填写的字段必须被报出来。
+  //
+  // 早先这里只过滤 stale / expiring，于是 `value: null` 的占位字段**完全隐形** ——
+  // agent 看到"档案字段 9 个、无过期字段"就以为数据齐全，
+  // 而真实情况是这个决策正卡在 5 处空白上。
+  //
+  // 这与"证伪链看不到结构化档案"是同一类缺陷：**状态投影没有反映真实状态。**
+  // 空白不是"没问题"，它就是问题本身。
+  const unset = freshness.filter((f) => f.state === 'unset')
+
   const active = await queryClaims({ status: 'active', config })
   const retired = await queryClaims({ status: 'superseded', config })
   const disputed = await queryClaims({ status: 'disputed', config })
@@ -195,9 +205,27 @@ export async function buildStatus(config = {}) {
 
   const topics = [...new Set(active.map((c) => c.topic))].sort()
 
+  // 逐个决策字段算：它的依赖里还缺什么、有没有过期。
+  // 这是"决策卡在哪"的直接答案，而不是让 agent 自己拼。
+  const decisions = fieldNames
+    .filter((f) => Array.isArray(fields[f]?.depends_on) && fields[f].depends_on.length)
+    .map((f) => {
+      const r = checkStaleness({ fields, decision: f })
+      return {
+        field: f,
+        value: fields[f].value,
+        unset: r.unset.map((x) => x.field),
+        stale: r.blocking.map((x) => x.field),
+        decidable: r.unset.length === 0 && r.blocking.length === 0,
+      }
+    })
+
   return {
     workspace: config.workspaceRoot ?? null,
-    fields: { total: fieldNames.length, stale, expiring },
+    fields: { total: fieldNames.length, stale, expiring, unset },
+    decisions,
+    /** 有没有决策正卡在空白上 */
+    blockedDecisions: decisions.filter((d) => !d.decidable),
     claims: {
       active: active.length,
       superseded: retired.length,
