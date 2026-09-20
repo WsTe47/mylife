@@ -519,17 +519,48 @@ export const inject = ['fs', 'tools', 'agents', 'sessions', 'skills']  // 【推
 
 ### 6.3 工具清单（面向模型）
 
+**实际实现 16 个**（原设计 9 个，实现过程中长出了 7 个）：
+
 | 工具名 | 作用 |
 |---|---|
-| `mylife_record` | 把一段输入存入 L0 原始层，返回 id |
-| `mylife_digest` | 生成/更新某主题的 L1 摘要 |
-| `mylife_claim_add` | 新增 L2 证据（自动抽取 kind/source/provenance） |
-| `mylife_recall` | 按主题或关键词取回 L1/L2 |
-| `mylife_trace` | 给一个 claim id，反查回 L0 原文（L4 溯源） |
-| `mylife_staleness` | 给定决策主题，返回阻塞性的过期字段 |
-| `mylife_competing` | 给定一个拟输出的结论，检索削弱/相反的已有证据 |
-| `mylife_branch` | 开启一个话题分支（内部走 subagent_fork） |
-| `mylife_profile_update` | 更新 L3 字段（含 source 与 updated_at） |
+| `mylife_record` | 把一段输入存入 L0 原始层；返回**精确行区间与可用 provenance** |
+| `mylife_digest` | 生成/更新某主题的 L1 摘要（同时留 AI 原稿与用户修订版） |
+| `mylife_claim_add` | 新增 L2 证据（kind / source / provenance） |
+| `mylife_claim_query` | 按主题或关键词取回 L2（**字面匹配**，非语义检索） |
+| `mylife_trace` | 给一个 claim id，反查回 L0 原文与真实行号（L4 溯源） |
+| `mylife_profile_set` | 写 L3 字段（source / TTL / **depends_on**） |
+| `mylife_staleness_check` | 逐个决策报阻塞字段（见下方与 pending 的分工） |
+| `mylife_supersede` | 作废旧前提（必须给 reason，记录保留） |
+| `mylife_conclusion_add` | 登记结论并绑定依据（无依据会被标记） |
+| `mylife_status` | "我现在的状态"简报（**空白置顶**） |
+| `mylife_defeaters` | **证伪链**：什么能推翻这个判断（四态含"空白"） |
+| `mylife_counter_evidence` | 词法极性反证（**已退为快速预筛**，真实语料常 0 findings） |
+| `mylife_pending` | 取待填项：空白字段 + 卡住的决策 + 现成问句 |
+| `mylife_ask` | 为某字段生成问句（模板优先，带示例与跳过出路） |
+| `mylife_answer` | 记录回答；**跳过/不清楚不写档案** |
+| `mylife_recompute` | 重算对比：填前 → 填后的机械差异 |
+
+后四个构成**闭环**：`pending → ask → answer → recompute`。
+
+设计里原定的 `mylife_branch`（话题分支）**未实现**，按决定移至二期。
+
+### 6.3.1 `mylife_staleness_check` 与 `mylife_pending` 的分工
+
+两者都涉及"缺什么"，但**回答不同的问题、服务不同的时刻**：
+
+| | `mylife_staleness_check` | `mylife_pending` |
+|---|---|---|
+| **回答** | 「**这个决策**还缺什么 / 什么过期了？」 | 「**整个档案**有什么待办？」 |
+| **范围** | 单个决策的依赖链（`depends_on` 递归展开） | 全档案空白 + 所有决策卡点 |
+| **主要用途** | 下结论**之前**自检 | 开场或主动维护**时**取待办清单 |
+| **额外产出** | — | **现成问句**（含示例与跳过出路） |
+| **三态** | unset / stale / expiring | 聚合成 blockedDecisions |
+
+**经验规则**：
+- **要下某个决策的结论** → `mylife_staleness_check(decision=X)`
+- **不知道从哪补起 / 要主动问用户** → `mylife_pending`
+- `mylife_pending` 内部**就是靠 `checkStaleness` 逐个决策算出来的**，
+  所以两者结果一致，只是投影不同 —— 不存在"谁更权威"的问题。
 
 命名说明【已验证】：避免保留名 `run_code`；同层重名会失败；第一方风格是 snake_case。
 
@@ -538,15 +569,24 @@ export const inject = ['fs', 'tools', 'agents', 'sessions', 'skills']  // 【推
 **(a) `tools/pre-execute` —— 决策前拦一道**
 
 ```js
+// ⚠️ PreToolDecision 只有 allow | deny | cancel | ask —— 没有 steer（已核实类型定义）。
+// 拦截"要不要放行"，不能改写参数；要注入上下文用 tools/post-execute 的 additionalContexts。
 ctx.on('tools/pre-execute', async (exec, next) => {
-  // 若正在执行的是产出决策的工具/最终回答
-  const stale = await checkStaleness(exec)
-  if (stale.length) {
-    return { kind: 'steer', reason: `依赖字段已过期：${stale.join(', ')}，需先请用户确认` }
+  if (!GUARDED_TOOLS.has(exec.name)) return next()
+  const fields = await readProfile(cfg)
+  const stale = checkStaleness({ fields, decision: exec.args?.decision })
+  if (stale.blocking.length || stale.unset.length) {
+    const names = [...stale.unset, ...stale.blocking].map((x) => x.field)
+    return { kind: 'deny', reason: `依赖字段缺失或过期：${names.join('、')}，需先请用户确认` }
   }
   return next()
 })
 ```
+
+**尚未实现 —— 这是当前最明显的"提示词级约束"缺口。**
+Skill 里写了"必须先调证伪链"，但代码层不强制，Agent 可以绕过
+（实测中确实绕过过一次）。这与项目自己的原则冲突：
+**能用结构解决的，不要用提示词解决。**
 
 **【已验证】** `tools/pre-execute` 是 waterfall，可返回类型化决策（allow/deny/steer），
 沙箱、权限、plan-mode 插件用的就是这个扩展点。需要单调最终拒绝时用 `ctx.tools.guard()`。
@@ -747,7 +787,22 @@ dsh plugin --profile web add dsh-mylife
 
 ---
 
-## 9. 待确认事项
+## 9. 实现状态与现实缺口
+
+**已经越过设计、变成事实的部分**（详见第 6 章）：
+工具从 9 个长到 **16 个**，其中闭环四件套、报告装配器、对比引擎
+都是设计里没有、实现中发现的缺口。
+
+**仍然是"设计有、代码无"的部分** —— 这些是真正的欠账：
+
+| 欠账 | 现状 | 为什么重要 |
+|---|---|---|
+| **反证强制层** | Skill 写了"必须先调证伪链"，**代码层不强制** | 实测中 Agent 绕过过一次。违背"能用结构解决就不用提示词"原则 |
+| **危机信号处理** | 三层模型只在文档与 Skill 里 | 它是**行为约束**，不是机制 —— 换模型就可能失效 |
+| **话题漂移与子 Agent 分支** | 设计完成，未实现 | 按决定移至二期 |
+| **主动复盘** | 未实现 | `dsh-schedule` 承担不了跨月提醒 |
+
+## 9.1 待确认事项
 
 前 5 项已决定（见 2.3）。仅剩 1 项待你确认：
 

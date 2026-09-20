@@ -15,7 +15,7 @@
 | **node 硬崩溃** | `~/Library/Logs/DiagnosticReports/` 中近期无 node/dsh 崩溃报告（最近一条是 9-13 的 MTLCompilerService） | ❌ 排除 |
 | **我的探针实例残留 / 端口冲突** | 3080 只有一个 PID；3181–3185 全部空闲；无孤儿 memorix 进程 | ❌ 排除 |
 | **Memorix 数据库锁争用** | 探测时仅有一个 memorix 子进程；`memorix.db-shm/wal` 正常 | ❌ 排除 |
-| **dsh-mylife 插件崩溃宿主** | 见第 2 节：插件在真实 agent 会话中正常注册 11 个工具，从未抛错 | ❌ 排除 |
+| **dsh-mylife 插件崩溃宿主** | 见第 2 节：插件在真实 agent 会话中正常注册工具（当时 11 个，现已 16 个），从未抛错 | ❌ 排除 |
 | **插件产生副作用文件** | `find ~/.dsh -newermt "-2h" -name "*mylife*"` 只命中两个 profile 的符号链接 | ❌ 排除 |
 
 **DSH 不写文件日志**（`~/.dsh` 下无 `.log`），所以宿主侧异常无法从事后日志追查 ——

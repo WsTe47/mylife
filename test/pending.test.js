@@ -285,3 +285,59 @@ describe('闭环四件套（工具层集成）', () => {
     await fs.rm(tmp, { recursive: true, force: true })
   })
 })
+
+
+describe('与 mylife_staleness_check 的分工（文档 6.3.1 的断言）', () => {
+  let tmp, cfg
+
+  test('pending 能看到「没接进依赖链」的空白，staleness 看不到', async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'mylife-div-'))
+    cfg = { workspaceRoot: tmp }
+
+    await execute('mylife_profile_set', { field: '现职满意度', value: '低', ttl_days: 90 }, cfg)
+    await execute('mylife_profile_set', { field: '现有存款', value: null, ttl_days: 90 }, cfg)
+    // 这个字段没有任何决策依赖它 —— 属于"没接线的空白"
+    await execute('mylife_profile_set', { field: '某段没接线的空白字段', value: null, ttl_days: 90 }, cfg)
+    await execute('mylife_profile_set', {
+      field: '跳槽决策', value: '未定', ttl_days: null, depends_on: ['现职满意度', '现有存款'],
+    }, cfg)
+
+    const st = await execute('mylife_staleness_check', { decision: '跳槽决策' }, cfg)
+    const pd = await execute('mylife_pending', {}, cfg)
+
+    // staleness 是单决策投影：只看该决策的依赖链
+    assert.deepEqual(st.unset.map((x) => x.field), ['现有存款'])
+    // pending 是全档案投影：能看到接线外的空白
+    assert.ok(
+      pd.unset.map((x) => x.field).includes('某段没接线的空白字段'),
+      'pending 必须能报出没接进依赖链的空白 —— 这是它存在的理由',
+    )
+    assert.ok(
+      !st.unset.map((x) => x.field).includes('某段没接线的空白字段'),
+      'staleness 只服务单个决策，看不到接线外的字段（不是缺陷，是分工）',
+    )
+
+    await fs.rm(tmp, { recursive: true, force: true })
+  })
+
+  test('对同一个决策，两者判断一致（pending 内部就是用 checkStaleness 算的）', async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'mylife-div2-'))
+    cfg = { workspaceRoot: tmp }
+    await execute('mylife_profile_set', { field: 'A', value: null, ttl_days: 90 }, cfg)
+    await execute('mylife_profile_set', { field: 'B', value: null, ttl_days: 90 }, cfg)
+    await execute('mylife_profile_set', {
+      field: 'D', value: 'x', ttl_days: null, depends_on: ['A', 'B'],
+    }, cfg)
+
+    const st = await execute('mylife_staleness_check', { decision: 'D' }, cfg)
+    const pd = await execute('mylife_pending', {}, cfg)
+    const blocked = pd.blockedDecisions.find((d) => d.field === 'D')
+
+    assert.deepEqual(
+      [...st.unset.map((x) => x.field)].sort(),
+      [...(blocked?.missing ?? [])].sort(),
+      '两者对同一决策的缺项清单必须一致 —— 不存在谁更权威',
+    )
+    await fs.rm(tmp, { recursive: true, force: true })
+  })
+})
