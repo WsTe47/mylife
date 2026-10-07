@@ -440,6 +440,18 @@ describe('L3 档案与时效引擎', () => {
     assert.ok(text.includes('可能已经不准'))
   })
 
+  test('⚠️ 过期提示不得硬编码存款例子（真实 bug：年假余额却提"存款变化"）', () => {
+    const text = renderStalenessPrompt({
+      decision: '双节假期安排',
+      blocking: [{ field: '年假余额', value: '4.5 天', ageDays: 15, ttlDays: 8 }],
+      expiring: [],
+      unset: [],
+    }, '双节假期安排')
+    assert.ok(text, '应产出提示')
+    assert.ok(!text.includes('存款'), `过期提示不该假定是存款：${text}`)
+    assert.ok(text.includes('沿用旧值'), '必须保留沿用出路')
+  })
+
   test('提示文案必须给出「沿用旧值」选项（否则用户会被卡住）', async () => {
     await setProfileField({ field: '存款', value: 120000, ttlDays: 90, config })
     const p = await readProfile({ config })

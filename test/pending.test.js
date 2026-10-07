@@ -42,6 +42,33 @@ describe('draftQuestion（模板优先）', () => {
     }
   })
 
+  test('⚠️ 非财务字段不得被问成钱（真实 bug：年假余额 → "10–15 万"）', () => {
+    // 病根：模板表里没有「假期」类模式，而「年假余额」含「余额」二字，
+    // 被存款模板抢走，于是问出金额示例 —— 明显答非所问。
+    const d = draftQuestion('年假余额')
+    assert.ok(!/万|数量级/.test(d.hint), `假期字段不该给金额示例，实际给了：${d.hint}`)
+    assert.ok(/天/.test(d.hint), '假期字段的示例应带天数')
+    assert.ok(!/多少/.test(d.question), '不该问"是多少"（听起来像在问钱）')
+  })
+
+  test('各类假期字段都走假期模板', () => {
+    for (const f of ['年假余额', '剩余年假', '调休天数', '带薪假', '请假余额']) {
+      const d = draftQuestion(f)
+      assert.ok(!/万/.test(d.hint), `${f} 不该给金额示例`)
+      assert.ok(/天|必须休完|剩余/.test(d.hint), `${f} 的示例应贴切假期：${d.hint}`)
+    }
+  })
+
+  test('假期模板不得抢走真正的财务字段', () => {
+    assert.ok(/万/.test(draftQuestion('现有存款').hint), '存款仍应是金额示例')
+    assert.ok(/税后|万/.test(draftQuestion('月税后收入').hint), '收入仍应是金额示例')
+  })
+
+  test('通用回退的示例不暗示"钱"', () => {
+    const d = draftQuestion('学历')
+    assert.ok(!/万|数量级|钱/.test(d.hint), `回退示例不该暗示钱：${d.hint}`)
+  })
+
   test('未知字段回退到通用问法，但仍带示例', () => {
     const d = draftQuestion('某个我从没见过的字段')
     assert.ok(d.question.includes('某个我从没见过的字段'))
