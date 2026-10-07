@@ -222,6 +222,26 @@ describe('闭环四件套（工具层集成）', () => {
   const T = (n) => createTools(cfg).find((t) => t.name === n)
   const text = (n, v) => T(n).output.render({}, v)[0].text
 
+  /**
+   * 复刻 harness 对工具返回值的 lossless-JSON 校验
+   * （dsh-util-values 的 snapshotJsonValue）：出现 undefined / NaN / 函数，
+   * **整个工具调用**会被拒绝（"value is not lossless JSON"），用户什么都看不到。
+   */
+  function lossless(value, seen = new Set()) {
+    if (value === null) return true
+    const t = typeof value
+    if (t === 'boolean' || t === 'string') return true
+    if (t === 'number') return Number.isFinite(value) && !Object.is(value, -0)
+    if (t !== 'object') return false
+    if (seen.has(value)) return false
+    seen.add(value)
+    const ok = Array.isArray(value)
+      ? value.every((item) => lossless(item, seen))
+      : Object.values(value).every((item) => lossless(item, seen))
+    seen.delete(value)
+    return ok
+  }
+
   async function seed() {
     tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'mylife-loop-'))
     cfg = { workspaceRoot: tmp }
@@ -265,6 +285,44 @@ describe('闭环四件套（工具层集成）', () => {
     const f = await readProfile({ config: cfg })
     assert.equal(f['现有存款'].value, '12 万')
     assert.equal(f['外部机会'].value, null, '跳过绝不能产生数值')
+    await fs.rm(tmp, { recursive: true, force: true })
+  })
+
+  // 回归：answer 作用在一个**档案里还不存在的新字段**、且没传 ttl_days 时，
+  // 曾因 setProfileField 没写 ttl_days 键而返回 `{ ttl_days: undefined }`，
+  // 让 harness 的 lossless-JSON 校验拒绝整个工具调用。
+  // 已有字段碰巧带着 ttl_days，所以上面那条测试一直没抓到。
+  test('answer：新字段省略 ttl_days 时，返回值仍是无损 JSON', async () => {
+    await seed()
+    const r = await execute(
+      'mylife_answer',
+      { field: '请假期间是否需要处理工作', answer: '大概不需要，但要随时 oncall' },
+      cfg,
+    )
+    assert.equal(r.status, 'answered')
+    assert.ok(
+      Number.isInteger(r.ttl_days) || r.ttl_days === null,
+      `ttl_days 必须是数字或 null，实际是 ${String(r.ttl_days)}`,
+    )
+    assert.equal(r.ttl_inferred, true, '新字段的有效期是推断的，必须标明')
+    assert.ok(lossless(r), '返回值必须落在无损 JSON 范围内')
+    assert.ok(
+      text('mylife_answer', r).includes('推断'),
+      '推断出来的有效期要告诉用户，别假装是他自己定的',
+    )
+
+    const { readProfile } = await import('../src/lib/store.js')
+    const f = await readProfile({ config: cfg })
+    assert.equal(f['请假期间是否需要处理工作'].ttl_days, r.ttl_days, '写进档案的有效期要对得上')
+    await fs.rm(tmp, { recursive: true, force: true })
+  })
+
+  test('answer：已有字段省略 ttl_days 时，不覆盖它原有的有效期', async () => {
+    await seed()
+    const r = await execute('mylife_answer', { field: '现有存款', answer: '12 万' }, cfg)
+    assert.equal(r.ttl_days, 90, '存款原本就是 90 天，不该被重新推断改掉')
+    assert.equal(r.ttl_inferred, false, '沿用了已有值，不算推断')
+    assert.ok(lossless(r))
     await fs.rm(tmp, { recursive: true, force: true })
   })
 

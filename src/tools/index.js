@@ -283,7 +283,9 @@ export function createTools(config = {}) {
       render: (v) => {
         const ttl =
           v.ttl_days === null || v.ttl_days === undefined ? '不过期' : `${v.ttl_days} 天`
-        const inferred = v.ttl_days === undefined ? '（系统按字段名推断）' : ''
+        // "这个有效期是系统猜的"要用 ttl_inferred 判断 —— 推断出来的也是一个具体数字，
+        // 靠 ttl_days 是否为 undefined 判断永远为假，等于从不提示用户确认。
+        const inferred = v.ttl_inferred ? '（系统按字段名推断，待你确认）' : ''
         return (
           `已更新档案字段「${v.field}」= ${JSON.stringify(v.value)}\n` +
           `  来源：${v.source}｜更新于：${v.updated_at}｜有效期：${ttl}${inferred}` +
@@ -495,7 +497,7 @@ export function createTools(config = {}) {
           return (
             `已记录 **${v.field}** = ${JSON.stringify(v.value)}\n` +
             `  有效期：${v.ttl_days === null || v.ttl_days === undefined ? '不过期' : v.ttl_days + ' 天'}` +
-            (v.ttl_days === undefined ? '（按字段名推断）' : '')
+            (v.ttl_inferred ? '（系统按字段名推断，待你确认）' : '')
           )
         }
         const label = v.status === 'skipped' ? '用户选择不填' : '用户表示不清楚'

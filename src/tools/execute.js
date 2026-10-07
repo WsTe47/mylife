@@ -45,6 +45,57 @@ import { readTextOrNull, layout, resolveRoot } from '../lib/workspace.js'
  * @returns {Promise<object>} 规范值（由 tools/index.js 的 render 呈现）
  */
 export async function execute(toolName, args = {}, config = {}) {
+  return toLosslessJson(await dispatch(toolName, args, config))
+}
+
+/**
+ * 把工具的规范值收敛到无损 JSON 范围内（兜底，不是替身）。
+ *
+ * harness 会用 lossless-JSON 校验每个工具的返回值，而 `undefined`、
+ * 非有限数、函数等都不是合法 JSON —— 结果里只要出现一个，
+ * **整个工具调用**就会失败（dsh-tools 报 "value is not lossless JSON"），
+ * 用户什么都看不到，也看不出是哪个字段的锅。
+ *
+ * 这里只按 JSON.stringify 的既有语义处理 `undefined` 这一种情况：
+ *   · 对象里值为 undefined 的键 → 丢掉（JSON 序列化本来就会忽略它）
+ *   · 数组里的 undefined        → null（JSON 序列化本来就会这么写）
+ * 其它非法值（NaN、Date、类实例、环……）**原样放行**，让 harness 照旧大声报错 ——
+ * 兜底不该把所有问题都糊过去。
+ *
+ * ⚠️ 它只是安全网。某个字段本该有值却算出了 undefined，仍然要修根因，
+ * 不要因为这里不再报错就当它没发生。
+ *
+ * @param {*} value - 工具返回值
+ * @returns {*} 保证不含 undefined 的等价值
+ */
+function toLosslessJson(value, seen = new WeakSet()) {
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return value
+    seen.add(value)
+    const out = value.map((item) => (item === undefined ? null : toLosslessJson(item, seen)))
+    seen.delete(value)
+    return out
+  }
+  if (value === null || typeof value !== 'object') {
+    // 顶层 undefined 也要变成 null；其余原始值原样交给 harness 判断
+    return value === undefined ? null : value
+  }
+  const proto = Object.getPrototypeOf(value)
+  // 只重建纯对象；Date / Map / 类实例等保持原样，由 harness 明确报错
+  if (proto !== null && proto !== Object.prototype) return value
+  if (seen.has(value)) return value
+  seen.add(value)
+  const out = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (item === undefined) continue
+    out[key] = toLosslessJson(item, seen)
+  }
+  seen.delete(value)
+  return out
+}
+
+/** 工具分发表。返回值由 {@link execute} 统一收敛。 */
+async function dispatch(toolName, args = {}, config = {}) {
   switch (toolName) {
     // ── 采集层 ──────────────────────────────────────────────
     case 'mylife_record':
@@ -112,9 +163,9 @@ export async function execute(toolName, args = {}, config = {}) {
 
     // ── 档案与时效 ──────────────────────────────────────────
     case 'mylife_profile_set': {
-      const ttlDays =
-        args.ttl_days === undefined ? inferTtlDays(args.field) : args.ttl_days
-      return setProfileField({
+      const ttlInferred = args.ttl_days === undefined
+      const ttlDays = ttlInferred ? inferTtlDays(args.field) : args.ttl_days
+      const r = await setProfileField({
         field: args.field,
         value: args.value,
         source: args.source ?? 'user_filled',
@@ -123,6 +174,9 @@ export async function execute(toolName, args = {}, config = {}) {
         provenance: args.provenance,
         config,
       })
+      // ttl_days 可能是 null（不过期）。`?? null` 保证返回值一定落在
+      // 无损 JSON 范围内 —— 见上方 toLosslessJson 的说明。
+      return { ...r, ttl_days: r.ttl_days ?? null, ttl_inferred: ttlInferred }
     }
 
     case 'mylife_staleness_check': {
@@ -201,16 +255,39 @@ export async function execute(toolName, args = {}, config = {}) {
     case 'mylife_answer': {
       const parsed = interpretAnswer(args.answer)
       if (parsed.status === 'answered') {
+        // ── 有效期解析：显式参数 > 字段已有 > 按字段名推断 ──────────
+        //
+        // ⚠️ 这里必须保证 ttl_days 一定有值（数字或 null），绝不能是 undefined。
+        // 早先的实现直接把 `args.ttl_days` 透传下去：对一个**档案里还不存在的新字段**，
+        // setProfileField 拿到 undefined 就不会写 ttl_days 键，返回对象里也就没有，
+        // 于是这里返回的 `{ ..., ttl_days: undefined }` 让 harness 的
+        // lossless-JSON 校验直接失败（dsh-tools: "value is not lossless JSON"），
+        // **整个工具调用**报错 —— 用户什么都看不到。
+        // 已有字段碰巧带着 ttl_days，所以那条路径一直是好的，测试也就没抓到。
+        const existing = (await readProfile({ config }))[args.field]
+        const ttlInferred = args.ttl_days === undefined && existing?.ttl_days === undefined
+        const ttlDays =
+          args.ttl_days !== undefined
+            ? args.ttl_days
+            : existing?.ttl_days !== undefined
+              ? existing.ttl_days
+              : inferTtlDays(args.field)
         const r = await setProfileField({
           field: args.field,
           value: parsed.value,
           // 用户口述 → user_filled；标明是"回答追问"得来的
           source: 'user_filled',
-          ttlDays: args.ttl_days,
+          ttlDays,
           provenance: `用户在追问中回答（${new Date().toISOString().slice(0, 10)}）`,
           config,
         })
-        return { field: args.field, status: 'answered', value: parsed.value, ttl_days: r.ttl_days }
+        return {
+          field: args.field,
+          status: 'answered',
+          value: parsed.value,
+          ttl_days: r.ttl_days ?? null,
+          ttl_inferred: ttlInferred,
+        }
       }
       // skipped / unclear：**不写档案**，只如实回报
       return {
